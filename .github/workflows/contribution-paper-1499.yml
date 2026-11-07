@@ -1,0 +1,59 @@
+name: Validate paper example plot saving
+
+on:
+  push:
+    branches: [validation/20261107-paper-1499]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'sylvesterkaczmarek/cellpose'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      MPLBACKEND: Agg
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      REVIEW_OUTPUT: /tmp/review-output
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Preserve checks and check out the exact upstream source
+        run: |
+          cp -R .contribution-validation "$RUNNER_TEMP/contribution-checks"
+          git fetch --no-tags --depth=1 origin a54cb48849b7e225a81e8e43dcb042d42427f543
+          git checkout --detach a54cb48849b7e225a81e8e43dcb042d42427f543
+      - name: Install model-free plotting test dependencies
+        run: python -m pip install numpy matplotlib pytest
+      - name: Test original and fixed plotting behavior
+        run: python "$RUNNER_TEMP/contribution-checks/run.py"
+      - name: Publish only the validated proposal branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git diff --cached --check
+          git -c user.name='Sylvester Kaczmarek' -c user.email='16242628+sylvesterkaczmarek@users.noreply.github.com' commit -m 'Allow saving real-data example plots without an interactive display'
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w 0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" push https://github.com/sylvesterkaczmarek/cellpose.git HEAD:refs/heads/fix/1499-save-paper-example-plots
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          record = {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'branch': 'fix/1499-save-paper-example-plots', 'base': 'a54cb48849b7e225a81e8e43dcb042d42427f543', 'upstream_pr_submitted': False}
+          (Path(os.environ['REVIEW_OUTPUT']) / 'commit.json').write_text(json.dumps(record, indent=2))
+          print(json.dumps(record))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cellpose-1499-review
+          path: /tmp/review-output
+          retention-days: 7
+          if-no-files-found: warn
